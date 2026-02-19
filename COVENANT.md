@@ -105,11 +105,11 @@ contracts/
 │   ├── personas.cue
 │   └── stdlib.cue            # derivation function standard library
 ├── billing/                  # billing domain
-│   ├── facts.cue            # domain facts with types
-│   ├── entities.cue         # entity state machines
-│   ├── rules.cue            # business rules
-│   ├── operations.cue       # operation contracts
-│   └── flows.cue            # persona paths
+│   ├── facts.cue             # domain facts with types
+│   ├── entities.cue          # entity state machines
+│   ├── rules.cue             # business rules
+│   ├── operations.cue        # operation contracts
+│   └── flows.cue             # persona paths
 ├── shipping/                 # shipping domain
 │   ├── facts.cue
 │   ├── entities.cue
@@ -1099,7 +1099,7 @@ The authoritative response is CUE. Agents that don't speak CUE can request JSON 
 The following layer structure is one valid generation target from Covenant contracts. It is non-normative — other architectures may be generated from the same contracts.
 
 ```
-┌────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────┐
 │              Generated Layer                    │
 │        types, validators, transport             │
 │       (generated from CUE + OpenAPI)            │
