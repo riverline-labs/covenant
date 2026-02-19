@@ -1,28 +1,10 @@
----
-title: "Covenant"
-subtitle: "Contract-First Systems for Human-AI Collaboration"
-version: "0.2.0"
-date: 2026-02-19
-contributors:
-  - name: Brandon
-    role: Author
-  - name: Claude (Anthropic)
-    role: Contributor
-  - name: DeepSeek
-    role: Contributor
-  - name: GPT (OpenAI)
-    role: Contributor
-  - name: Grok (xAI)
-    role: Contributor
-  - name: Gemini (Google)
-    role: Contributor
-license: TBD
-repository: TBD
----
-
 # Covenant
 
 **Contract-First Systems for Human-AI Collaboration**
+
+**Version:** 0.2.0 | **Date:** 2026-02-19
+
+**Contributors:** Brandon Bush (Author), Claude/Anthropic, DeepSeek, GPT/OpenAI, Grok/xAI, Gemini/Google
 
 A specification for building systems where humans and AI agents collaborate through machine-readable contracts. The contracts are the source of truth; implementation is disposable. Agents reason about what they can do by reading contracts, not code.
 
