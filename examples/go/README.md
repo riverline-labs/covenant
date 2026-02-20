@@ -7,7 +7,7 @@ A proof-of-concept implementation of the [Covenant v0.3.0 specification](../COVE
 ```
 contract-server (:26861)    executor (:26860)         cli
   GET /.well-known/covenant   POST /execute        ──► sends requests
-  GET /contracts/**      ◄── fetches CUE at boot        │
+  GET /contracts/**      ◄── fetches CUE at boot         │
         │                         │                      │
   contracts/ directory       CUE Go SDK            ◄─────┘
   (local filesystem)         compile + evaluate
