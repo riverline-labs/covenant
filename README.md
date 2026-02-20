@@ -102,6 +102,8 @@ No reverse dependencies. A Rule cannot define a Fact. An Operation cannot define
 
 All contracts are written in [CUE](https://cuelang.org/), chosen for its unification of schema and data, built-in constraints, non-Turing completeness, and export to JSON/YAML/OpenAPI.
 
+The machine-readable specification lives in [`covenant.cue`](covenant.cue) — it defines the schema for all Covenant contract files and annotates each field with enough semantic context for an AI agent to understand not just the shape of a valid contract but the intent behind it. An agent that reads `covenant.cue` can validate contracts, understand the evaluation algorithm, and reason about the system without reading the prose spec.
+
 CUE is the reference implementation. The Covenant philosophy is portable to any language that satisfies the same constraints.
 
 ## Key Concepts
@@ -114,7 +116,7 @@ CUE is the reference implementation. The Covenant philosophy is portable to any 
 
 **Snapshots** — When an agent begins a flow, it receives a point-in-time snapshot of rules. The agent operates in a consistent logical universe mid-flow. Rules can evolve without breaking in-progress work.
 
-**Design by Debate** — Before a domain is implemented, AI personas (Optimist, Skeptic, Regulator, Implementor, Agent) debate its contracts until consensus or exhaustion. Unresolved objections become documentation, not hidden assumptions.
+**Design by Debate** — Before a domain is implemented, AI personas (Optimist, Skeptic, Regulator, Implementor, Agent) debate its contracts until consensus or exhaustion. Unresolved objections become documentation, not hidden assumptions. The debate protocol is defined in [`debate.cue`](debate.cue) — an agent can read it and run a debate without consulting the prose spec.
 
 ## Examples
 
@@ -124,7 +126,13 @@ CUE is the reference implementation. The Covenant philosophy is portable to any 
 
 **v0.3.0** — The specification is unstable. Breaking changes may occur between minor versions. The 0.x phase is about tightening, not growing.
 
-See the full specification in [COVENANT.md](COVENANT.md).
+| File | Purpose |
+|---|---|
+| [COVENANT.md](COVENANT.md) | Full prose specification |
+| [covenant.cue](covenant.cue) | Machine-readable spec — contract schema, evaluation algorithm, execution model |
+| [debate.cue](debate.cue) | Machine-readable debate protocol — personas, rounds, consensus, exhaustion |
+
+The CUE files are designed so an AI agent can understand and work with Covenant without consuming the full prose spec.
 
 ## Contributors
 
