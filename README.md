@@ -60,7 +60,7 @@ CUE is the reference implementation. The Covenant philosophy is portable to any 
 
 ## Status
 
-**v0.2.0** -- The specification is unstable. Breaking changes may occur between minor versions. The 0.x phase is about tightening, not growing.
+**v0.3.0** -- The specification is unstable. Breaking changes may occur between minor versions. The 0.x phase is about tightening, not growing.
 
 See the full specification in [COVENANT.md](COVENANT.md).
 
@@ -77,4 +77,4 @@ See the full specification in [COVENANT.md](COVENANT.md).
 
 ## License
 
-[The Unlicense](LICENSE) -- public domain. Do whatever you want with it.
+[Creative Commons Attribution 4.0 International (CC BY 4.0)](LICENSE) -- free to share and adapt with attribution.
