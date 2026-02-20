@@ -26,7 +26,7 @@ Three components, one Go module:
 
 **Terminal 1 — start the contract server:**
 ```bash
-cd covenant-poc
+cd examples/go
 go run ./contract-server --dir ./contracts
 # listening on :26861
 ```
