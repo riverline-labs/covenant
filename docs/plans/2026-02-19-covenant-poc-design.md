@@ -10,7 +10,7 @@ A proof-of-concept implementation of the Covenant v0.3.0 specification. Three co
 ## Architecture
 
 ```
-contract-server (:8081)    executor (:8080)       cli
+contract-server (:26861)   executor (:26860)      cli
   GET /.well-known/covenant  POST /execute     ──► execute
   GET /contracts/**     ◄── fetch CUE at boot       │
         │                        │                   │
