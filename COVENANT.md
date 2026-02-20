@@ -4,7 +4,7 @@
 
 **Version:** 0.3.0 | **Date:** 2026-02-19
 
-**Contributors:** Brandon Bush (Author), Claude/Anthropic, DeepSeek, GPT/OpenAI, Grok/xAI, Gemini/Google
+**Contributors:** Brandon W. Bush (Originator), Claude/Anthropic, DeepSeek, GPT/OpenAI, Grok/xAI, Gemini/Google
 
 A specification for building systems where humans and AI agents collaborate through machine-readable contracts. The contracts are the source of truth; implementation is disposable. Agents reason about what they can do by reading contracts, not code.
 
