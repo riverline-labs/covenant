@@ -11,7 +11,7 @@ Covenant is a specification for building systems where humans and AI agents coll
 In Covenant systems:
 
 - **Contracts come first.** All system behavior is expressed in declarative contracts before any code is written. Implementation is derived from contracts, never the reverse.
-- **Implementation is disposable.** Code can be fully regenerated at any time. Business logic lives in the contract layer, not in adapters or generated code.
+- **Implementation is disposable.** The normative runtime is a generic executor that interprets contracts directly — there is no generated code capable of drifting from the contract source. Regeneration-safety is structural, not disciplinary.
 - **AI agents are first-class citizens.** Contracts are structured for machine consumption first. An agent can determine what operations exist, what rules apply, what paths are available, and how to handle failure -- all without reading code.
 - **The contract layer is decidable.** Contracts are non-Turing complete by design. No arbitrary computation, no implicit behavior, no surprises.
 
@@ -50,13 +50,19 @@ CUE is the reference implementation. The Covenant philosophy is portable to any 
 
 ## Key Concepts
 
-**Evaluation Algorithm** -- When an operation is invoked, the system follows a strict sequence: gather facts, derive computed facts, validate entity state, evaluate rules, apply verdicts, execute (side effects happen here and only here), transition state, advance flow. Steps before execution are side-effect-free.
+**Generic Executor** -- The normative runtime model. A single `POST /execute` endpoint interprets contracts directly at runtime. There are no operation-specific handlers and no code generation pipeline. Business logic lives exclusively in contracts; the only irreducible implementation artifacts are port adapters.
+
+**Evaluation Algorithm** -- When an operation is invoked, the executor follows a strict sequence: gather facts, derive computed facts, validate entity state, evaluate rules, apply verdicts, execute (side effects happen here and only here), transition state, advance flow. Steps before execution are side-effect-free.
 
 **Personas** -- Identities that can perform operations. A persona's `can` list is the single source of authorization truth. Persona boundary crossings in flows are explicit and auditable.
 
 **Snapshots** -- When an agent begins a flow, it receives a point-in-time snapshot of rules. The agent operates in a consistent logical universe mid-flow. Rules can evolve without breaking in-progress work.
 
 **Design by Debate** -- Before a domain is implemented, AI personas (Optimist, Skeptic, Regulator, Implementor, Agent) debate its contracts until consensus or exhaustion. Unresolved objections become documentation, not hidden assumptions.
+
+## Examples
+
+- [**examples/go**](examples/go) -- A complete Go implementation: contract server, generic executor, and CLI client, using the CUE Go SDK to interpret contracts at runtime.
 
 ## Status
 
