@@ -2,7 +2,7 @@
 
 **Contract-First Systems for Human-AI Collaboration**
 
-**Version:** 0.2.0 | **Date:** 2026-02-19
+**Version:** 0.3.0 | **Date:** 2026-02-19
 
 **Contributors:** Brandon Bush (Author), Claude/Anthropic, DeepSeek, GPT/OpenAI, Grok/xAI, Gemini/Google
 
@@ -19,6 +19,10 @@ The contract is authoritative. All system behavior is expressed in declarative c
 ### 1.2 Regeneration-Safe
 
 Contracts are the source of truth. Implementation can be fully regenerated at any time. No hand-edited code lives in the contract layer. Business logic must never migrate into adapters or generated code. If behavior cannot be expressed in the contract, the contract language is insufficient — not the implementation.
+
+The normative implementation model (Section 14) makes regeneration-safety structural rather than disciplinary. When contracts are interpreted directly by a generic executor, there is no generated code capable of drifting from the contract source. Regeneration-safety is not a practice to be maintained; it is a property of the architecture.
+
+Alternative implementation approaches that rely on code generation must treat regeneration-safety as an explicit discipline: generated artifacts must never be hand-edited, and the generation pipeline must be the only path by which implementation changes. See Appendix E.
 
 ### 1.3 Agent-Readable by Design
 
@@ -150,34 +154,63 @@ import "common/money"
 facts: {
   // From request input
   "payment.amount": money.Amount & {
-    source: "input"
+    source:     "input"
+    required:   true
+    on_missing: "system_error"
   }
 
   // From context (authentication, tenant, etc.)
   "user.roles": [...string] & {
-    source: "ctx"
+    source:     "ctx"
+    required:   true
+    on_missing: "system_error"
   }
 
   // From repositories via ports
   "customer.status": "active" | "suspended" | "closed" & {
-    source: "port:customerRepo"
+    source:     "port:customerRepo"
+    required:   true
+    on_missing: "system_error"
   }
 
   "invoice.balance": money.Amount & {
-    source: "port:invoiceRepo"
+    source:     "port:invoiceRepo"
+    required:   true
+    on_missing: "system_error"
   }
 
   "invoice.due_date": time.Time & {
-    source: "port:invoiceRepo"
+    source:     "port:invoiceRepo"
+    required:   true
+    on_missing: "system_error"
   }
 
   // Historical materializations present as scalars
   "customer.failed_payment_count": int & {
     source:      "port:customerRepo"
+    required:    true
+    on_missing:  "system_error"
     description: "Count of failed payments in rolling 90-day window"
   }
 }
 ```
+
+**Fact Failure Fields:**
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `required` | no | `true` | Whether this fact must be present for evaluation to proceed |
+| `on_missing` | no | `"system_error"` | Executor behavior when the fact cannot be gathered from its port |
+
+**`on_missing` values:**
+
+| Value | Behavior |
+|---|---|
+| `"system_error"` | Terminate invocation with `FACT_UNAVAILABLE`. No verdict produced. |
+| `"deny"` | Produce a deny outcome with `FACT_UNAVAILABLE`. |
+| `"skip"` | Treat fact as absent. Rule predicates referencing it evaluate to false. |
+
+**Scope of `on_missing`:** Facts with `source: "input"` or `source: "ctx"` that are absent are treated as schema validation failures before fact-gathering begins, not as `on_missing` cases. The `on_missing` field applies exclusively to facts gathered from ports (`source: "port:*"`).
 
 **Historical and aggregate facts:** Real business systems require temporal invariants and historical aggregation ("three strikes" logic, rolling windows, etc.). These are materialized by Ports and presented as scalar facts. The contract declares what the fact is and where it comes from; the Port is responsible for computing it. This keeps the fact layer simple while acknowledging that the data behind a fact may involve complex queries.
 
@@ -695,6 +728,8 @@ elevation_grant: {
 - Elevation is auditable and revocable
 - The contract declares what elevations are possible; the runtime decides whether to grant them
 
+Elevation events MUST produce a separate audit record referencing the `invocation_id` of the originating operation (see Section 14.6).
+
 ---
 
 ## 9. Flows and Snapshots
@@ -915,9 +950,9 @@ When an operation is invoked, the system follows a strict evaluation sequence. T
 
 ```
 1. GATHER base facts
-   ├── Collect facts from input (source: "input")
-   ├── Collect facts from context (source: "ctx")
-   └── Collect facts from ports (source: "port:*")
+   ├── Collect facts from input (source: "input") — validate against schema
+   ├── Collect facts from context (source: "ctx") — validate against schema
+   └── Collect facts from ports (source: "port:*") — apply on_missing policy on failure
 
 2. DERIVE computed facts
    ├── Topologically sort derived facts by dependency
@@ -1054,89 +1089,258 @@ Authorization: Bearer <token-with-persona-claims>
 Accept: text/x-cue
 ```
 
-### 13.2 Response
+### 13.2 Well-Known Endpoint (Normative)
+
+A Covenant system MUST expose a discovery endpoint at `GET /.well-known/covenant`.
+
+This endpoint provides machine-readable metadata describing the served contract domain.
+
+The response MUST conform to the following structure:
 
 ```cue
 {
-  version:     "1.0"
-  service:     "billing"
-  description: "Handles invoicing, payments, and refunds"
+  version:          "1.0"
+  service:          "billing"
+  description:      "Handles invoicing, payments, and refunds"
 
-  // Derived from authentication token
-  persona: "billing_admin"
+  contract_etag:    "a3f9c1"
 
-  // Static contract metadata (cacheable, changes only on deployment)
+  persona:          "billing_admin"
+
   contracts: {
     cue:            "/contracts/billing/"
     openapi:        "/generated/billing.openapi.json"
     stdlib_version: "0.1.0"
   }
 
-  // Dynamic state (do not cache, fetch on demand)
   runtime: {
-    active_flows: [
-      "invoice-to-payment",
-      "bulk-refund",
-    ]
+    active_flows:   ["invoice-to-payment", "bulk-refund"]
     snapshot_count: 3
   }
 }
 ```
 
-**Caching semantics:**
+**Field Requirements:**
 
-- `contracts` — cacheable. Changes only on deployment. Agents should re-fetch when notified of contract updates.
-- `runtime` — not cacheable. Reflects current system state. Agents should fetch on demand.
+| Field | Description |
+|---|---|
+| `version` | Covenant specification version |
+| `service` | Logical service name |
+| `description` | Human-readable description of the domain |
+| `contract_etag` | Identifier representing the current contract set |
+| `persona` | Resolved persona for the authenticated caller |
+| `contracts` | Locations of machine-readable contract artifacts |
+| `runtime` | Runtime metadata (informational only) |
 
-### 13.3 Format Negotiation
+**Contract ETag Semantics:**
 
-The authoritative response is CUE. Agents that don't speak CUE can request JSON via `Accept: application/json`. The server converts on the fly. The CUE response is always canonical.
+`contract_etag` MUST change whenever any contract within the served domain changes. This includes changes to common types used by the domain, facts, entity definitions, rules, operations, flows, standard library version, and any contract artifact affecting evaluation behavior.
+
+`contract_etag` MUST uniquely identify the exact contract set in effect.
+
+Agents that cache contracts:
+
+- MUST compare cached `contract_etag` to the current value before invocation
+- MUST treat a changed `contract_etag` as a signal to re-fetch contracts before the next invocation
+- MUST NOT operate on contracts they know to be stale
+
+Polling this endpoint and comparing `contract_etag` satisfies the requirement for contract change detection defined in Section 14.7.
+
+**Caching Semantics:**
+
+The well-known endpoint response MAY include standard HTTP caching headers. It MUST NOT allow stale responses to mask contract changes. Implementations SHOULD ensure that `contract_etag` changes are observable by clients within a bounded and predictable timeframe.
+
+**Runtime Block:**
+
+The `runtime` block provides informational metadata only. Agents MUST NOT rely on runtime values for correctness or policy decisions.
+
+**Format Negotiation:**
+
+The authoritative response format is CUE. Agents that cannot consume CUE MAY request JSON via `Accept: application/json`. The server converts on the fly. The CUE response is always canonical.
 
 ---
 
-## 14. Implementation Layers (Non-Normative)
+## 14. Generic Executor (Normative)
 
-The following layer structure is one valid generation target from Covenant contracts. It is non-normative — other architectures may be generated from the same contracts.
+### 14.1 Normative Implementation Model and Conformance
+
+The normative implementation model for a Covenant system is the **generic executor**.
+
+A system claiming conformance with this specification MUST implement the generic executor model as defined in this section, or MUST demonstrate behavioral equivalence under all normative requirements defined herein.
+
+A Covenant-conformant system consists of:
+
+- **Contract Server** — serves CUE contracts at `/.well-known/covenant` and `/contracts/*`
+- **Generic Execution Endpoint** — a single `POST /execute` endpoint that interprets contracts at runtime
+- **Port Adapters** — concrete implementations of declared ports
+
+There are no operation-specific handlers in the normative model. There is no code generation pipeline. Business logic resides exclusively in contracts. The executor interprets contracts at runtime.
+
+This makes regeneration-safety structural rather than disciplinary: there is no generated code capable of drifting from the contract source.
+
+Alternative implementation approaches (code generation, traditional handler layers) are conformance-compatible accommodations described in Appendix E. They are not the reference model.
+
+### 14.2 Execution Endpoint
 
 ```
-┌─────────────────────────────────────────────────┐
-│              Generated Layer                    │
-│        types, validators, transport             │
-│       (generated from CUE + OpenAPI)            │
-└──────────────┬───────────────────▲──────────────┘
-               │                   │
-            input            result | ErrorEnvelope
-               │                   │
-┌──────────────▼───────────────────┤──────────────┐
-│              Handler Layer              ← ctx   │
-│         orchestration, coordination             │
-│       (receives flow snapshot context)          │
-└──────────────┬───────────────────▲──────────────┘
-               │                   │
-            data in          domain result
-               │                   │
-┌──────────────▼───────────────────┤──────────────┐
-│              Domain Layer                       │
-│       (imports CUE types directly)              │
-└──────────────┬───────────────────▲──────────────┘
-               │                   │
-           port call           response
-               │                   │
-┌──────────────▼───────────────────┤──────────────┐
-│               Ports                             │
-│        (abstract interfaces)                    │
-└──────────────┬───────────────────▲──────────────┘
-               │                   │
-            invoke             return
-               │                   │
-┌──────────────▼───────────────────┤──────────────┐
-│              Adapters                           │
-│     (local mocks for dev,                       │
-│      cloud adapters for prod)                   │
-└─────────────────────────────────────────────────┘
+POST /execute
+Authorization: Bearer <token-with-persona-claims>
+Content-Type: application/json
 ```
 
-Agents developing against contracts work with local adapters that mock all external dependencies. Cloud adapters are swapped in at deployment.
+```json
+{
+  "operation": "ProcessPayment",
+  "input": { ... },
+  "dry_run": false,
+  "contract_etag": "a3f9c1"
+}
+```
+
+**Request Fields:**
+
+| Field | Required | Description |
+|---|---|---|
+| `operation` | yes | Operation name as declared in contracts |
+| `input` | yes | Input matching the operation's declared schema |
+| `dry_run` | no | If true, execute through verdict resolution only. Default: false |
+| `contract_etag` | no* | Client-known contract version |
+
+*If supplied, the executor MUST validate it before any evaluation proceeds.
+
+**Contract Version Validation:**
+
+If `contract_etag` is supplied:
+
+- The executor MUST compare it against the active contract version
+- If mismatch, the executor MUST reject the request with HTTP 409 and `error_code: CONTRACT_VERSION_MISMATCH`
+- No evaluation may proceed under mismatch
+
+This validation applies equally to live and dry-run invocations. Dry-run does not bypass version validation.
+
+All rule evaluation within a single invocation MUST occur against a single, immutable contract version. Contracts MUST NOT be reloaded mid-invocation.
+
+Agents that cache contracts SHOULD include `contract_etag` in requests. Doing so enables the executor to detect races between contract re-fetch and invocation, providing a consistency guarantee that local comparison alone cannot. Executors MUST reject requests with a mismatched ETag regardless of whether the agent could have detected the staleness locally.
+
+### 14.3 Evaluation Requirements
+
+The executor MUST follow the normative evaluation algorithm (Section 11) exactly.
+
+No operation-specific policy logic may exist outside that algorithm.
+
+Port adapters:
+
+- MUST NOT embed business rules
+- MUST NOT enforce policy decisions
+- MUST NOT conditionally alter behavior based on contract semantics
+
+Ports are limited to fact retrieval, side-effect execution, and pure data translation. Any logic influencing eligibility, authorization, escalation, or denial MUST reside in contracts. A port adapter that silently enforces a rule — regardless of intent — is a conformance violation.
+
+### 14.4 Dry-Run Semantics
+
+If `dry_run: true`:
+
+- The executor MUST execute Steps 1–5 of the evaluation algorithm
+- The executor MUST NOT execute side effects
+- The executor MUST NOT persist entity state transitions
+- The executor MUST NOT modify any persistent system state
+- The executor MUST NOT mutate caches in a way that alters future live evaluations
+
+Dry-run responses MUST include:
+
+```json
+{
+  "dry_run": true,
+  "operation": "ProcessPayment",
+  "fact_snapshot": { ... },
+  "verdicts": [ ... ],
+  "rules_matched": [ ... ],
+  "outcome": "would_execute | would_deny | would_escalate | would_require"
+}
+```
+
+Executors SHOULD implement dry-run. Agents SHOULD use dry-run prior to operations with irreversible side effects.
+
+Dry-run invocations MUST be audited with `outcome: "dry_run"`.
+
+### 14.5 Fact Gathering and Port Failure
+
+Facts declare their failure behavior via `on_missing`. If not declared, `on_missing` defaults to `"system_error"`.
+
+| `on_missing` | Required Executor Behavior |
+|---|---|
+| `"system_error"` | Terminate invocation immediately with `outcome: "system_error"` and `error_code: FACT_UNAVAILABLE`. No verdict is produced. |
+| `"deny"` | Produce `outcome: "denied"` and `error_code: FACT_UNAVAILABLE`. |
+| `"skip"` | Treat fact as absent. Rule predicates referencing it evaluate to false. |
+
+**FACT_UNAVAILABLE Response:**
+
+When emitted, the response MUST include:
+
+```json
+{
+  "error_code": "FACT_UNAVAILABLE",
+  "fact": "customer.status",
+  "reason": "timeout | unavailable | null"
+}
+```
+
+`FACT_UNAVAILABLE` MUST be distinguishable from business-rule denial in both the response and the audit record. Audit records MUST indicate whether denial originated from a policy rule or from fact unavailability.
+
+### 14.6 Audit Requirements
+
+Every invocation — live or dry-run — MUST produce an audit record. Audit generation occurs exclusively in the executor. Port adapters MUST NOT generate independent audit records for operation invocations.
+
+**Required Audit Fields:**
+
+| Field | Description |
+|---|---|
+| `invocation_id` | Unique identifier for this invocation |
+| `timestamp` | ISO 8601, UTC |
+| `agent_id` | Identity of the calling agent |
+| `persona` | Resolved persona at time of invocation |
+| `operation` | Operation name |
+| `input_payload` | Original request input |
+| `contract_version` | Active `contract_etag` at time of invocation |
+| `executor_version` | Version of the executor |
+| `fact_snapshot` | All base and derived facts used in evaluation |
+| `verdicts` | All verdicts produced, in resolution order |
+| `rules_matched` | IDs of all rules that matched |
+| `outcome` | `executed`, `denied`, `escalated`, `required`, `system_error`, or `dry_run` |
+| `error_code` | If applicable |
+| `duration_ms` | Total wall time for the invocation |
+
+Elevation events MUST produce a separate audit record referencing the `invocation_id` of the originating invocation (see Section 8.5).
+
+### 14.7 Contract Versioning and Change Detection
+
+The well-known endpoint (Section 13.2) MUST include a `contract_etag` field reflecting the current contract version. Its semantics are defined in Section 13.2.
+
+Executors MUST expose a mechanism by which agents can detect contract version changes. Polling the well-known endpoint and comparing `contract_etag` satisfies this requirement.
+
+Executors SHOULD provide push-based invalidation (webhook, SSE, or equivalent). Push notification is not required for conformance.
+
+Agents MUST re-fetch contracts upon detecting a `contract_etag` change. Agents MUST NOT submit invocations against contracts they know to be stale.
+
+### 14.8 Executor Versioning and Compatibility
+
+Contracts MUST declare a minimum executor version:
+
+```cue
+min_executor_version: "1.2.0"
+```
+
+Executors MUST declare the range of contract versions they support.
+
+If an executor cannot satisfy a contract's `min_executor_version`, it MUST reject all requests with `error_code: EXECUTOR_VERSION_INCOMPATIBLE`. Executors MUST NOT partially evaluate incompatible contracts.
+
+Executor updates are infrastructure deployments. Contract updates are governance updates. These are distinct operational domains and MUST NOT be conflated in change management processes.
+
+### 14.9 Performance Guidance (Non-Normative)
+
+Executors are expected to maintain compiled in-memory representations of contracts and invalidate them upon contract update. This is expected baseline behavior, not an optimization.
+
+Fact gathering is the primary latency surface. Executors should gather independent facts concurrently where the contract dependency graph permits. The dependency graph provides the information needed to determine which facts can be gathered in parallel without violating evaluation order.
 
 ---
 
@@ -1145,7 +1349,7 @@ Agents developing against contracts work with local adapters that mock all exter
 From Covenant contracts, implementations can generate:
 
 - **OpenAPI specifications** — for REST API consumers
-- **Typed code** (TypeScript, Go, Java, etc.) — for type-safe implementation
+- **Typed code** (TypeScript, Go, Java, etc.) — for type-safe port adapter implementation
 - **Validation code** — for request/response validation
 - **Documentation** — for human readers
 - **Test suites** — for contract verification
@@ -1161,12 +1365,13 @@ The contract repository is the source. Everything in this list is a disposable p
 
 1. Domain experts + AI personas debate contracts until consensus
 2. Contracts are committed to the repository
-3. Multiple AI agents generate complete applications from the same contracts
-4. Stakeholders interact with generated applications, providing feedback
-5. Feedback updates contracts (not code)
-6. Regeneration produces the next iteration
+3. Port adapters are implemented against declared port interfaces
+4. The generic executor serves the contracts and handles all operation execution
+5. Agents discover the system via `/.well-known/covenant`, read contracts, and execute operations
+6. Feedback updates contracts (not executor code)
+7. Rule changes are committed to contracts and are effective immediately
 
-The cost of seeing a working application approaches the cost of imagining it.
+The cost of changing business behavior approaches the cost of editing a contract.
 
 ---
 
@@ -1189,6 +1394,7 @@ Covenant follows Semantic Versioning (SemVer) while the specification is unstabl
 - Removing a verdict type
 - Changing the authority model (Section 8.1)
 - Altering the semantics of an existing standard library function
+- Changing the normative execution model (Section 14)
 
 ### 17.3 What Does Not Constitute a Breaking Change
 
@@ -1232,6 +1438,10 @@ During the 0.x phase, the following discipline applies:
 | Exhaustion        | The state where AI personas cannot reach consensus, signaling complexity  |
 | Referee           | The neutral persona that manages the debate protocol                      |
 | Elevation         | Temporary, scoped, auditable assumption of a different persona            |
+| Generic Executor  | The normative runtime that interprets contracts directly                   |
+| contract_etag     | An opaque identifier representing the current contract set version        |
+| FACT_UNAVAILABLE  | Error code indicating a fact could not be gathered from its port          |
+| dry_run           | An invocation mode that evaluates rules without executing side effects    |
 
 ---
 
@@ -1249,7 +1459,8 @@ Covenant is a specification for building software where:
 - Derived facts are explicit and constrained to a versioned standard library
 - Persona boundaries are declared, auditable, and scoped
 - Evaluation follows a strict, normative algorithm with side effects isolated to a single step
-- Implementation is disposable, regenerated from contracts
+- The generic executor interprets contracts directly — regeneration-safety is structural, not disciplinary
+- Implementation is disposable; port adapters are the only irreducible implementation artifact
 - Domains that resist consensus are simplified or deferred, not forced
 
 The name expresses the mutual obligation: Humans maintain accurate contracts. AI agents operate within them. Together, they build software neither could build alone.
@@ -1258,7 +1469,7 @@ The name expresses the mutual obligation: Humans maintain accurate contracts. AI
 
 ## Appendix A: Open Questions (Unresolved by Design)
 
-These are known tensions and gaps that are intentionally unresolved in v0.2. They are documented here so that ambiguity is visible, not hidden. Each entry names the concern, who raised it, and the current thinking.
+These are known tensions and gaps that are intentionally unresolved in v0.3. They are documented here so that ambiguity is visible, not hidden.
 
 ### A.1 Snapshot Refresh Safety
 
@@ -1284,31 +1495,27 @@ In compliance-heavy domains, 20+ rules may match a single operation. How are com
 
 **Raised by:** Grok, Gemini, GPT
 
-Real domains will pressure the standard library to grow. Fuzzy matching, regex, geocoding, rate limiting, cryptographic verification — where is the boundary?
+Real domains will pressure the standard library to grow. Where is the boundary?
 
 **Current position:** Additions go through the debate protocol. Functions must be pure, total, and terminating.
 
-**Needs:** Formal criteria for what can and cannot be a stdlib function. Possibly tiered function categories with different trust levels. A Turing-completeness proof obligation for new additions.
+**Needs:** Formal criteria for what can and cannot be a stdlib function. Possibly tiered function categories with different trust levels.
 
 ### A.4 Cross-Domain Flow Orchestration
 
 **Raised by:** Anticipated
 
-What happens when a flow spans multiple domains (e.g., billing creates an invoice and shipping triggers fulfillment)?
+What happens when a flow spans multiple domains?
 
 **Current position:** Cross-domain facts must be lifted to Common Types. Cross-domain flows are not specified.
 
-**Needs:** Decision on whether flows are strictly single-domain (with cross-domain coordination via events) or whether a meta-flow layer is warranted.
+**Needs:** Decision on whether flows are strictly single-domain or whether a meta-flow layer is warranted.
 
 ### A.5 Formal Snapshot Isolation Levels
 
 **Raised by:** GPT
 
-Snapshots are described narratively but not with formal isolation semantics. Possible levels:
-
-- **Snapshot isolation** — flow sees rules as of start time (current default)
-- **Refresh isolation** — flow may refresh rules at step boundaries
-- **Strict isolation** — flow aborts if rules change during execution
+Snapshots are described narratively but not with formal isolation semantics.
 
 **Current position:** Snapshot isolation with optional refresh on expiry. Formal definitions deferred.
 
@@ -1316,21 +1523,19 @@ Snapshots are described narratively but not with formal isolation semantics. Pos
 
 **Raised by:** Grok, GPT
 
-How does one prove that generated implementation respects the contract? Regeneration safety is aspirational without verification.
+How does one prove that a conformant implementation (including the generic executor) correctly implements the evaluation algorithm?
 
 **Current position:** Not specified.
 
-**Needs:** Property-based testing from CUE constraints, symbolic execution of the evaluation algorithm, model checking of entity state machines, or contract conformance test suites. Likely a significant workstream.
+**Needs:** Property-based testing from CUE constraints, symbolic execution of the evaluation algorithm, model checking of entity state machines, or contract conformance test suites.
 
 ### A.7 Precondition-Satisfiable Denies
 
 **Raised by:** GPT
 
-What if a deny is conditional on a fact that could be satisfied by a `require` rule? Currently rules are independent and non-mutating, so this situation cannot resolve through rule interplay.
+What if a deny is conditional on a fact that could be satisfied by a `require` rule? Currently rules are independent and non-mutating.
 
-**Current position:** This is safe but limits expressive power. Introducing rule interaction risks Turing creep.
-
-**Needs:** Monitoring. If real domains consistently hit this pattern, a controlled mechanism may be needed. For now, the limitation is intentional.
+**Current position:** Safe but limits expressive power. Introducing rule interaction risks Turing creep.
 
 ### A.8 Observability and Traceability
 
@@ -1338,7 +1543,7 @@ What if a deny is conditional on a fact that could be satisfied by a `require` r
 
 A `traceability_id` pattern for linking facts back to source documents/ports would strengthen auditability.
 
-**Current position:** Not yet specified. Useful but unclear whether it belongs in core spec or as a non-normative extension.
+**Current position:** Not yet specified.
 
 ### A.9 Cost and Risk Annotations
 
@@ -1346,13 +1551,21 @@ A `traceability_id` pattern for linking facts back to source documents/ports wou
 
 Operations and rules could benefit from `cost_category` or `risk_tier` annotations for agent planning.
 
-**Current position:** Potentially useful but domain-specific. Deferred until real usage patterns emerge.
+**Current position:** Deferred until real usage patterns emerge.
+
+### A.10 Executor Conformance Testing
+
+**Raised by:** Debate (v0.3)
+
+How does an implementation demonstrate behavioral equivalence if it does not use the generic executor model? What is the test surface?
+
+**Current position:** Not specified. Section 14.1 permits behavioral equivalence as an alternative to the generic executor model but does not define how equivalence is proven.
+
+**Needs:** A conformance test suite that exercises the evaluation algorithm across all verdict types, entity state transitions, fact-gathering failure modes, and audit record completeness.
 
 ---
 
 ## Appendix B: Future Directions (Non-Binding)
-
-These are aspirations, not commitments. They are separated from the core spec so they cannot backdoor changes to normative sections.
 
 ### B.1 AI Reasoning Optimizations
 
@@ -1360,7 +1573,7 @@ Agents may benefit from pre-computed "capability surfaces" — materialized view
 
 ### B.2 Visual Graph Tooling
 
-The contract DAG, entity state machines, and flow sequences are all naturally visual. Purpose-built tooling for rendering and navigating these structures would lower the barrier for non-technical stakeholders.
+The contract DAG, entity state machines, and flow sequences are all naturally visual.
 
 ### B.3 Automated Rule Conflict Analysis
 
@@ -1376,65 +1589,121 @@ For regulated industries, generating audit-ready documentation from contracts �
 
 ### B.6 Self-Hosting Governance
 
-Expressing Covenant governance rules (who can modify common/, how stdlib grows, when domains split) as Covenant contracts themselves.
+Expressing Covenant governance rules as Covenant contracts themselves.
+
+### B.7 Agent Sophistication Tiers
+
+Formal definition of agent capability tiers (naive, caching, planning, paranoid) with recommended behaviors for each tier, including `contract_etag` handling, dry-run usage, and rule pre-evaluation.
 
 ---
 
 ## Appendix C: Recommended Reviewers
 
-After v0.2 is frozen, the most valuable external reviewers are not generalist LLMs or architecture enthusiasts. The spec needs pressure from:
+After v0.3 is frozen, the most valuable external reviewers are:
 
 - **Compliance engine builders** — they will stress the rule evaluation model and verdict semantics
 - **DSL designers** — they will stress CUE's fitness and the standard library boundaries
 - **Rule engine maintainers under regulation** — they will stress snapshot lifecycle and audit requirements
 - **Teams that have migrated systems through breaking version shifts** — they will stress versioning discipline and migration paths
-
-These reviewers will surface different failure modes than AI models can.
+- **Security engineers** — they will stress the executor as a single trust boundary and the implications of `contract_etag` validation
 
 ---
 
 ## Appendix D: Change Log
 
+### v0.3.0 (2026-02-19)
+
+**Breaking changes from v0.2.0:**
+
+- Section 14 replaced entirely. The generic executor is now the normative implementation model. Code generation and traditional handler approaches are accommodations (Appendix E), not the reference model.
+- Section 1.2 updated to distinguish structural regeneration-safety (generic executor) from disciplinary regeneration-safety (code generation).
+- Section 16 (Development Workflow) updated to reflect the generic executor model.
+- Section 17.2 updated: changing the normative execution model now constitutes a breaking change.
+
+**New normative content:**
+
+- Section 14.1: Conformance definition for the generic executor model
+- Section 14.2: Execution endpoint with `contract_etag` request validation, `CONTRACT_VERSION_MISMATCH` error, and agent sophistication guidance
+- Section 14.3: Port adapter constraints — policy logic prohibition
+- Section 14.4: Dry-run semantics with audit requirement
+- Section 14.5: Fact gathering failure modes, `on_missing` policy, `FACT_UNAVAILABLE` error code
+- Section 14.6: Comprehensive audit requirements with required field list
+- Section 14.7: Contract change detection — polling as sufficient, push as SHOULD
+- Section 14.8: Executor versioning and compatibility matrix
+- Section 13.2: `contract_etag` field now required on well-known endpoint response; caching and staleness semantics normative; runtime block explicitly informational-only
+
+**New non-normative content:**
+
+- Appendix E: Alternative implementation approaches (code generation, traditional handlers) as conformance-compatible accommodations with conformance requirements and migration path
+- Appendix A.10: Executor conformance testing as open question
+- Appendix B.7: Agent sophistication tiers as future direction
+
+**Enhancements:**
+
+- Section 4.1: `required` and `on_missing` fields added to fact definitions; `on_missing` scoped explicitly to port facts
+- Section 18 (Glossary): `Generic Executor`, `contract_etag`, `FACT_UNAVAILABLE`, and `dry_run` added
+- Section 19 (Summary): Updated to reflect generic executor as normative model
+- Section 8.5: Cross-reference to Section 14.6 for elevation audit requirements
+
 ### v0.2.0 (2026-02-19)
 
 **Breaking changes from v0.1.0:**
 
-- Operations are now a first-class primitive in the dependency graph (new `operations.cue` file per domain)
-- Entity state machines are now a first-class primitive (new `entities.cue` file per domain)
-- Personas are the single source of authorization truth; the `restricted_to` field on operations has been replaced by `invocation_conditions`
-- The `allow` verdict type has been removed; absence of blocking verdicts is permission
-- Flow branching now uses `on_verdict` keys instead of inline `when` conditions
+- Operations are now a first-class primitive in the dependency graph
+- Entity state machines are now a first-class primitive
+- Personas are the single source of authorization truth
+- The `allow` verdict type has been removed
+- Flow branching now uses `on_verdict` keys
 - The `@restricted` annotation is removed in favor of explicit `invocation_conditions`
-
-**New normative sections:**
-
-- Section 5: Entity State Machines
-- Section 7: Operations (previously implicit, now declared)
-- Section 8.1: Authority Model (single source of truth for authorization)
-- Section 8.5: Elevation Protocol
-- Section 9.4: Snapshot Lifecycle (TTL, expiration, correlation ID)
-- Section 11: Evaluation Algorithm (normative step-by-step sequence)
-- Section 17: Versioning Discipline
-
-**New non-normative sections:**
-
-- Section 3.2: Governance of Common Types
-- Section 4.3: Derivation Standard Library with versioned function set
-- Appendix A: Open Questions
-- Appendix B: Future Directions
-- Appendix C: Recommended Reviewers
-- Appendix D: Change Log
-
-**Enhancements:**
-
-- Error envelopes now include `retry_after`, `fallback_operations`, and `human_escalation_fields`
-- Discovery endpoint separates static contract metadata from dynamic runtime state with explicit caching semantics
-- Debate protocol now includes a Referee persona and structured exhaustion classification
-- Turing-completeness canary formalized as a standing check in the debate protocol
-- Historical/aggregate facts documented with scalar presentation principle
-- CUE portability note added (CUE is reference implementation, philosophy is portable)
-- Hardening principles documented for the 0.x phase
 
 ### v0.1.0 (2026-02-19)
 
 Initial specification.
+
+---
+
+## Appendix E: Alternative Implementation Approaches (Non-Normative)
+
+### E.1 Purpose
+
+The normative implementation model for Covenant is the generic executor (Section 14). This appendix describes alternative implementation approaches that remain conformance-compatible provided all normative behavioral requirements are satisfied.
+
+These approaches are accommodations for teams with existing infrastructure constraints. They SHOULD NOT be chosen for new implementations where the generic executor is feasible.
+
+### E.2 Code Generation
+
+In the code generation approach, CUE contracts are used to generate operation-specific handlers in a target language. The generated handlers implement the evaluation algorithm for each operation.
+
+**Conformance requirements:**
+
+- The evaluation algorithm (Section 11) MUST be implemented faithfully in every generated handler
+- Generated artifacts MUST NOT be hand-edited
+- The generation pipeline MUST be the only path by which business logic changes
+- All audit requirements (Section 14.6) MUST be satisfied
+- All port adapter constraints (Section 14.3) MUST be satisfied
+- Contract versioning and change detection requirements (Section 14.7) MUST be satisfied
+
+Regeneration-safety in this approach is disciplinary, not structural. Teams adopting this approach MUST establish and enforce the discipline that generated code is never the source of truth. Without active enforcement, generated artifacts accumulate hand-edits and become a second source of truth — which is the failure mode Covenant exists to prevent.
+
+### E.3 Traditional Handler Layers
+
+In the traditional handler approach, operation-specific handlers are written by hand. Handlers implement the evaluation algorithm directly.
+
+All requirements from E.2 apply. Additionally:
+
+- Every handler MUST implement the full evaluation algorithm, including side-effect isolation
+- Handlers MUST NOT embed policy logic that duplicates or shadows contract rules
+- Contract changes MUST be reflected in handlers promptly; the handler is not the source of truth
+
+This approach carries the highest drift risk of any conformance-compatible approach. It is appropriate only for incremental migration of existing systems toward the Covenant model.
+
+### E.4 Migration Path
+
+Teams adopting either accommodation approach SHOULD treat it as a transitional state. The recommended migration path is:
+
+1. Establish contracts as the source of truth for all business logic
+2. Implement handlers (generated or hand-written) that faithfully reflect contracts
+3. Instrument handlers to verify behavioral equivalence with the evaluation algorithm
+4. Replace handler-per-operation implementations with a generic executor as infrastructure matures
+
+The generic executor is the destination. The accommodations are the path.
