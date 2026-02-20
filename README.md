@@ -120,7 +120,7 @@ CUE is the reference implementation. The Covenant philosophy is portable to any 
 
 ## Examples
 
-- [**examples/go**](examples/go) — A complete Go implementation: contract server, generic executor, and CLI client, using the CUE Go SDK to interpret contracts at runtime.
+- [**examples/go**](examples/go) — A complete (mostly, see its [README.md](examples/go/README.md)) Go implementation: contract server, generic executor, and CLI client, using the CUE Go SDK to interpret contracts at runtime.
 
 ## Status
 
