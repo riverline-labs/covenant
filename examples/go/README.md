@@ -78,3 +78,21 @@ go run ./cli --op ProcessPayment --invoice inv_001 --amount 15000 --dry-run
 **Fact resolution:** Dotted paths like `payment.amount.value` resolve to the base fact `payment.amount` (a nested map) and navigate into its `value` field.
 
 **Port adapters:** `customerRepo`, `invoiceRepo`, and `paymentProcessor` are in-memory. They retrieve facts and execute operations — no policy logic.
+
+## Not Yet Implemented
+
+on_missing port failure handling — The engine supports on_missing on fact definitions but port failure paths (timeout, unavailable, null) are unexercised and untested. Section 14.5 requires that FACT_UNAVAILABLE be distinguishable from business-rule denials in both the response and audit record.
+
+Audit records — The executor logs operation outcomes to stdout but does not produce structured audit records as required by Section 14.6. The required fields (invocation_id, fact_snapshot, rules_matched, contract_version, etc.) are not persisted.
+
+Fact path resolution is unspecified — The executor resolves dotted fact paths like payment.amount.value by treating payment.amount as the base fact and navigating into its value field. This behavior is not defined in the spec. Section 4 assumes 
+facts are scalars; the spec will need to either formalize the dotted-path traversal convention or require that all facts are scalar values.
+
+Discovery response shape diverges from spec — Section 13.2 specifies "cue": "/contracts/billing/" as a directory reference. This POC serves an enumerated file list instead ("files": [...]). The enumerated approach is more useful for agents and may prompt a spec update, but currently represents a divergence.
+
+## What This Tells Us
+
+This POC has done exactly what a POC should do: revealed gaps between theory and practice. The gaps fall into three categories:
+- Implementation gaps — things the spec requires that this POC hasn't built yet: on_missing failure handling and structured audit records.
+- Spec gaps — behaviors the implementation had to invent because the spec doesn't define them: dotted fact path resolution. These need spec clarification to ensure interoperability across executor implementations.
+- Spec improvements — places where the implementation found a better answer than the spec currently describes: the enumerated file list in discovery is more useful than a directory reference and may warrant a spec update.
